@@ -1,0 +1,39 @@
+{
+  "orders": [
+    {
+      "id": "NS-JPR-1042",
+      "userId": null,
+      "customerName": "Anjali Mehta",
+      "phone": "9829012345",
+      "address": "42, Bapu Nagar, Near Central Park, Jaipur",
+      "pincode": "302015",
+      "paymentMethod": "UPI",
+      "items": [
+        {
+          "productId": "prod-cal-almonds",
+          "name": "California Almonds",
+          "weight": "500 g",
+          "price": 649,
+          "quantity": 1
+        },
+        {
+          "productId": "prod-everyday-trail-mix",
+          "name": "Everyday Trail Mix",
+          "weight": "250 g",
+          "price": 349,
+          "quantity": 1
+        }
+      ],
+      "subtotal": 998,
+      "shipping": 0,
+      "total": 998,
+      "status": "Vacuum Sealed & Dispatched",
+      "createdAt": "2026-11-13T10:44:21.439Z"
+    }
+  ],
+  "users": [],
+  "sessions": [],
+  "quotes": [],
+  "newsletter": [],
+  "contacts": []
+}

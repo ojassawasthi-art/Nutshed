@@ -1,0 +1,6 @@
+{
+  "name": "NutStrid",
+  "description": "Premium dry fruits, packed fresh in Jaipur. Sold by weight, vacuum sealed on order, and delivered across India.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

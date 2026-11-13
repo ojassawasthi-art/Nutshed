@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0A1F17;
+  --color-ink-deep: #06150F;
+  --color-oat: #FAF4E6;
+  --color-oat-muted: #EFE5CE;
+  --color-card: #FFFCF5;
+  --color-saffron: #F2A93B;
+  --color-saffron-deep: #D98B1E;
+  --color-pistachio: #B9D86A;
+  --color-rose: #E8728F;
+  --color-almond: #4A2E1B;
+
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-sans: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background-color: #FAF4E6;
+    color: #0A1F17;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-color: #FAF4E6;
+    color: #0A1F17;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: #F2A93B;
+    color: #0A1F17;
+  }
+}
+
+/* Subtle organic paper-grain texture */
+.paper-grain {
+  position: relative;
+}
+.paper-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  z-index: 1;
+}
+
+.paper-grain-light::after {
+  opacity: 0.032;
+  mix-blend-mode: multiply;
+}
+
+/* Jaipur Jharokha Arch Mask */
+.jharokha-mask {
+  clip-path: url(#jharokha-clip);
+}
+
+/* Primary button shine sweep */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+.btn-shine::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.38) 50%,
+    transparent 100%
+  );
+  transform: skewX(-20deg);
+  transition: left 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.btn-shine:hover::before {
+  left: 140%;
+}
+
+/* Saffron text shimmer */
+@keyframes saffronShimmer {
+  0%, 72%, 100% {
+    background-position: -150% 0;
+  }
+  88% {
+    background-position: 150% 0;
+  }
+}
+
+.saffron-shimmer {
+  background: linear-gradient(
+    110deg,
+    #F2A93B 20%,
+    #FFE3A8 48%,
+    #F2A93B 76%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: saffronShimmer 5.5s ease-in-out infinite;
+}
+
+/* Marquee animations */
+@keyframes marqueeScroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 32s linear infinite;
+}
+
+.animate-marquee-slow {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 44s linear infinite;
+}
+
+.pause-on-hover:hover .animate-marquee,
+.pause-on-hover:hover .animate-marquee-slow,
+.pause-on-hover:active .animate-marquee,
+.pause-on-hover:active .animate-marquee-slow {
+  animation-play-state: paused;
+}
+
+/* Slow circular stamp spin */
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spinSlow 22s linear infinite;
+}
+
+/* Gentle bobbing */
+@keyframes floatBob {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+.animate-float-bob {
+  animation: floatBob 4.8s ease-in-out infinite;
+}
+
+/* Shimmer skeleton */
+@keyframes skeletonPulse {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #EFE5CE 25%, #FAF4E6 50%, #EFE5CE 75%);
+  background-size: 200% 100%;
+  animation: skeletonPulse 1.6s infinite linear;
+}
+
+/* Hide scrollbars cleanly for horizontal peek strips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Accessibility: respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-marquee,
+  .animate-marquee-slow,
+  .animate-spin-slow,
+  .animate-float-bob,
+  .saffron-shimmer,
+  .skeleton-shimmer {
+    animation: none !important;
+  }
+  .saffron-shimmer {
+    color: #F2A93B;
+    background: none;
+    -webkit-text-fill-color: #F2A93B;
+  }
+  .btn-shine::before {
+    display: none;
+  }
+}
