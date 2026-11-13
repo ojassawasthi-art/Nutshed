@@ -1,6 +1,30 @@
 {
   "orders": [
     {
+      "id": "NS-JPR-1044",
+      "userId": null,
+      "customerName": "Rohan Test",
+      "phone": "9829099999",
+      "address": "MI Road Jaipur",
+      "pincode": "302001",
+      "paymentMethod": "UPI",
+      "paymentStatus": "pending",
+      "items": [
+        {
+          "productId": "prod-cal-almonds",
+          "name": "California Almonds",
+          "weight": "500 g",
+          "price": 649,
+          "quantity": 1
+        }
+      ],
+      "subtotal": 649,
+      "shipping": 0,
+      "total": 649,
+      "status": "Awaiting Payment",
+      "createdAt": "2026-11-13T20:15:02.275Z"
+    },
+    {
       "id": "NS-JPR-1042",
       "userId": null,
       "customerName": "Anjali Mehta",
@@ -34,6 +58,11 @@
   "users": [],
   "sessions": [],
   "quotes": [],
-  "newsletter": [],
+  "newsletter": [
+    {
+      "email": "ojassawasthi@gmail.com",
+      "createdAt": "2026-11-13T20:13:23.578Z"
+    }
+  ],
   "contacts": []
 }

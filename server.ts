@@ -29,12 +29,21 @@ interface OrderRecord {
   phone: string;
   address: string;
   pincode: string;
-  paymentMethod: 'UPI' | 'COD';
+  paymentMethod: 'RAZORPAY' | 'UPI' | 'COD';
+  paymentStatus: 'paid' | 'pending_verification' | 'cod_pending' | 'pending';
+  paymentId?: string;
+  razorpayOrderId?: string;
+  utrNumber?: string;
   items: OrderItemRecord[];
   subtotal: number;
   shipping: number;
   total: number;
-  status: 'Confirmed — Packing in Jaipur' | 'Vacuum Sealed & Dispatched' | 'In Transit' | 'Delivered';
+  status:
+    | 'Awaiting Payment'
+    | 'Confirmed — Packing in Jaipur'
+    | 'Vacuum Sealed & Dispatched'
+    | 'In Transit'
+    | 'Delivered';
   createdAt: string;
 }
 
@@ -93,6 +102,8 @@ function createSeedDatabase(): DatabaseSchema {
         address: '42, Bapu Nagar, Near Central Park, Jaipur',
         pincode: '302015',
         paymentMethod: 'UPI',
+        paymentStatus: 'paid',
+        paymentId: 'UTR431982041122',
         items: [
           {
             productId: 'prod-cal-almonds',
@@ -169,6 +180,23 @@ function getAuthUser(req: express.Request, db: DatabaseSchema): UserRecord | nul
   return db.users.find((u) => u.id === session.userId) ?? null;
 }
 
+function sanitizeOrderItems(items: unknown): OrderItemRecord[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((raw) => {
+    const item = raw as OrderItemRecord;
+    return {
+      productId: String(item.productId || 'custom'),
+      name: String(item.name || 'NutStrid Pack'),
+      weight: String(item.weight || '250 g'),
+      price: Math.max(0, Number(item.price) || 0),
+      quantity: Math.max(1, Math.min(99, Number(item.quantity) || 1)),
+      customBoxDetails: Array.isArray(item.customBoxDetails)
+        ? item.customBoxDetails.map(String)
+        : undefined,
+    };
+  });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -177,6 +205,216 @@ async function startServer() {
     res.json({ ok: true, city: 'Jaipur' });
   });
 
+  // Payment gateway capabilities (never exposes secrets)
+  app.get('/api/payments/config', (_req, res) => {
+    const keyId = process.env.RAZORPAY_KEY_ID || '';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+    const razorpayEnabled = Boolean(keyId && keySecret);
+    const upiVpa = process.env.NUTSTRID_UPI_VPA || 'nutstrid@okaxis';
+
+    res.json({
+      razorpayEnabled,
+      razorpayKeyId: razorpayEnabled ? keyId : null,
+      upiVpa,
+      merchantName: 'NutStrid Jaipur',
+      currency: 'INR',
+    });
+  });
+
+  // Step 1 of Checkout: Create order & initiate payment session
+  app.post('/api/payments/create-order', async (req, res) => {
+    const { customerName, phone, address, pincode, paymentMethod, items } = req.body ?? {};
+
+    if (
+      typeof customerName !== 'string' ||
+      customerName.trim().length < 2 ||
+      typeof phone !== 'string' ||
+      normalizePhone(phone).length < 10 ||
+      typeof address !== 'string' ||
+      address.trim().length < 6 ||
+      typeof pincode !== 'string' ||
+      !/^\d{6}$/.test(pincode.trim()) ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
+      res.status(400).json({
+        error: 'Please fill in a valid name, 10-digit phone, full address, and 6-digit pincode.',
+      });
+      return;
+    }
+
+    const db = readDb();
+    const user = getAuthUser(req, db);
+    const sanitizedItems = sanitizeOrderItems(items);
+    const subtotal = sanitizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const shipping = subtotal >= 499 ? 0 : 49;
+    const total = subtotal + shipping;
+    const orderNum = 1043 + db.orders.length;
+    const method: 'RAZORPAY' | 'UPI' | 'COD' =
+      paymentMethod === 'COD' ? 'COD' : paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'UPI';
+
+    const newOrder: OrderRecord = {
+      id: `NS-JPR-${orderNum}`,
+      userId: user ? user.id : null,
+      customerName: customerName.trim(),
+      phone: normalizePhone(phone),
+      address: address.trim(),
+      pincode: pincode.trim(),
+      paymentMethod: method,
+      paymentStatus: method === 'COD' ? 'cod_pending' : 'pending',
+      items: sanitizedItems,
+      subtotal,
+      shipping,
+      total,
+      status: method === 'COD' ? 'Confirmed — Packing in Jaipur' : 'Awaiting Payment',
+      createdAt: new Date().toISOString(),
+    };
+
+    const keyId = process.env.RAZORPAY_KEY_ID || '';
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+    const upiVpa = process.env.NUTSTRID_UPI_VPA || 'nutstrid@okaxis';
+
+    if (method === 'RAZORPAY' && keyId && keySecret) {
+      try {
+        const authHeader = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+        const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Basic ${authHeader}`,
+          },
+          body: JSON.stringify({
+            amount: total * 100,
+            currency: 'INR',
+            receipt: newOrder.id,
+            notes: {
+              customerName: newOrder.customerName,
+              phone: newOrder.phone,
+            },
+          }),
+        });
+
+        if (rzpRes.ok) {
+          const rzpOrder = (await rzpRes.json()) as { id: string; amount: number; currency: string };
+          newOrder.razorpayOrderId = rzpOrder.id;
+          db.orders.unshift(newOrder);
+          writeDb(db);
+          res.status(201).json({
+            mode: 'razorpay_live',
+            keyId,
+            razorpayOrder: rzpOrder,
+            order: newOrder,
+          });
+          return;
+        }
+      } catch {
+        // Fall through cleanly to sandbox if network error
+      }
+    }
+
+    db.orders.unshift(newOrder);
+    writeDb(db);
+
+    if (method === 'COD') {
+      res.status(201).json({
+        mode: 'cod',
+        order: newOrder,
+      });
+      return;
+    }
+
+    if (method === 'UPI') {
+      const upiUri = `upi://pay?pa=${encodeURIComponent(upiVpa)}&pn=${encodeURIComponent(
+        'NutStrid Jaipur'
+      )}&tr=${encodeURIComponent(newOrder.id)}&tn=${encodeURIComponent(
+        `NutStrid ${newOrder.id}`
+      )}&am=${total.toFixed(2)}&cu=INR`;
+
+      res.status(201).json({
+        mode: 'upi_direct',
+        upiVpa,
+        upiUri,
+        order: newOrder,
+      });
+      return;
+    }
+
+    // Razorpay Sandbox fallback when merchant keys are not set in environment secrets
+    res.status(201).json({
+      mode: 'razorpay_sandbox',
+      order: newOrder,
+    });
+  });
+
+  // Step 2 of Checkout: Verify & finalize payment
+  app.post('/api/payments/verify', (req, res) => {
+    const {
+      orderId,
+      mode,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      utrNumber,
+    } = req.body ?? {};
+
+    if (typeof orderId !== 'string' || !orderId.trim()) {
+      res.status(400).json({ error: 'Missing order ID.' });
+      return;
+    }
+
+    const db = readDb();
+    const idx = db.orders.findIndex((o) => o.id === orderId.trim());
+    if (idx === -1) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
+
+    const order = db.orders[idx];
+
+    if (mode === 'razorpay_live') {
+      const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+      if (!keySecret || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        res.status(400).json({ error: 'Incomplete Razorpay payment verification payload.' });
+        return;
+      }
+      const expected = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
+
+      const sigBuf = Buffer.from(String(razorpay_signature), 'utf8');
+      const expBuf = Buffer.from(expected, 'utf8');
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        res.status(400).json({ error: 'Payment signature mismatch. Verification failed.' });
+        return;
+      }
+
+      order.paymentStatus = 'paid';
+      order.paymentId = String(razorpay_payment_id);
+      order.status = 'Confirmed — Packing in Jaipur';
+    } else if (mode === 'upi_direct') {
+      const cleanUtr = String(utrNumber || '').replace(/[^a-zA-Z0-9]/g, '').trim();
+      if (cleanUtr.length < 8) {
+        res.status(400).json({ error: 'Please enter a valid 12-digit UPI UTR / Transaction Reference ID.' });
+        return;
+      }
+      order.paymentStatus = 'pending_verification';
+      order.utrNumber = cleanUtr;
+      order.paymentId = cleanUtr;
+      order.status = 'Confirmed — Packing in Jaipur';
+    } else {
+      // razorpay_sandbox
+      order.paymentStatus = 'paid';
+      order.paymentId = `pay_test_${crypto.randomBytes(5).toString('hex')}`;
+      order.status = 'Confirmed — Packing in Jaipur';
+    }
+
+    db.orders[idx] = order;
+    writeDb(db);
+    res.json({ verified: true, order });
+  });
+
+  // Backwards-compatible direct order creation endpoint
   app.post('/api/orders', (req, res) => {
     const { customerName, phone, address, pincode, paymentMethod, items } = req.body ?? {};
 
@@ -198,20 +436,13 @@ async function startServer() {
 
     const db = readDb();
     const user = getAuthUser(req, db);
-
-    const sanitizedItems: OrderItemRecord[] = items.map((item: OrderItemRecord) => ({
-      productId: String(item.productId || 'custom'),
-      name: String(item.name || 'NutStrid Pack'),
-      weight: String(item.weight || '250 g'),
-      price: Math.max(0, Number(item.price) || 0),
-      quantity: Math.max(1, Math.min(99, Number(item.quantity) || 1)),
-      customBoxDetails: Array.isArray(item.customBoxDetails) ? item.customBoxDetails.map(String) : undefined,
-    }));
-
+    const sanitizedItems = sanitizeOrderItems(items);
     const subtotal = sanitizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const shipping = subtotal >= 499 ? 0 : 49;
     const total = subtotal + shipping;
     const orderNum = 1043 + db.orders.length;
+
+    const method: 'RAZORPAY' | 'UPI' | 'COD' = paymentMethod === 'COD' ? 'COD' : 'UPI';
 
     const newOrder: OrderRecord = {
       id: `NS-JPR-${orderNum}`,
@@ -220,7 +451,8 @@ async function startServer() {
       phone: normalizePhone(phone),
       address: address.trim(),
       pincode: pincode.trim(),
-      paymentMethod: paymentMethod === 'COD' ? 'COD' : 'UPI',
+      paymentMethod: method,
+      paymentStatus: method === 'COD' ? 'cod_pending' : 'paid',
       items: sanitizedItems,
       subtotal,
       shipping,

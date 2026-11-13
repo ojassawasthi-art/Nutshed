@@ -26,7 +26,10 @@ export interface OrderSummary {
   phone: string;
   address: string;
   pincode: string;
-  paymentMethod: 'UPI' | 'COD';
+  paymentMethod: 'RAZORPAY' | 'UPI' | 'COD';
+  paymentStatus?: 'paid' | 'pending_verification' | 'cod_pending' | 'pending';
+  paymentId?: string;
+  utrNumber?: string;
   items: {
     productId: string;
     name: string;

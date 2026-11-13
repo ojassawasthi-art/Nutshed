@@ -400,7 +400,10 @@ export function Footer() {
             </p>
             <div className="flex flex-wrap items-center gap-2.5 pt-1">
               <span className="px-3 py-1.5 rounded-full border border-oat/20 font-mono text-[10px] uppercase tracking-[0.14em] text-oat/85">
-                UPI Accepted
+                UPI QR
+              </span>
+              <span className="px-3 py-1.5 rounded-full border border-oat/20 font-mono text-[10px] uppercase tracking-[0.14em] text-oat/85">
+                Cards &amp; Netbanking
               </span>
               <span className="px-3 py-1.5 rounded-full border border-oat/20 font-mono text-[10px] uppercase tracking-[0.14em] text-oat/85">
                 Cash on Delivery

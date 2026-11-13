@@ -11,10 +11,32 @@ import {
   LogOut,
   ShoppingBag,
   ShieldCheck,
+  Smartphone,
+  CreditCard,
+  Banknote,
 } from 'lucide-react';
 import { useStore, type OrderSummary } from '../context/StoreContext';
 import { FAQS, formatINR, getImageUrl } from '../data/catalog';
 import { ImageWithFallback } from './NutSvgAssets';
+import { PaymentModal, type PaymentSessionData } from './PaymentModal';
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+  }
+}
+
+function loadRazorpayScript(): Promise<boolean> {
+  if (window.Razorpay) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
 export function CartPage() {
   const {
@@ -179,9 +201,10 @@ export function CheckoutPage() {
   const [phone, setPhone] = useState(user?.phone || '');
   const [address, setAddress] = useState('');
   const [pincode, setPincode] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'RAZORPAY' | 'COD'>('UPI');
   const [submitting, setSubmitting] = useState(false);
   const [confirmedOrder, setConfirmedOrder] = useState<OrderSummary | null>(null);
+  const [paymentSession, setPaymentSession] = useState<PaymentSessionData | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -189,6 +212,15 @@ export function CheckoutPage() {
       if (!phone) setPhone(user.phone);
     }
   }, [user]);
+
+  const completeOrder = (order: OrderSummary) => {
+    setPaymentSession(null);
+    setConfirmedOrder(order);
+    setLastOrderId(order.id);
+    clearCart();
+    refreshUserOrders();
+    showToast(`Order ${order.id} confirmed.`);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,7 +233,7 @@ export function CheckoutPage() {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
 
-      const res = await fetch('/api/orders', {
+      const res = await fetch('/api/payments/create-order', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -223,21 +255,83 @@ export function CheckoutPage() {
       const data = await res.json();
       if (!res.ok) {
         showToast(data.error || 'Please check your delivery details.');
-      } else {
-        setConfirmedOrder(data.order);
-        setLastOrderId(data.order.id);
-        clearCart();
-        refreshUserOrders();
-        showToast(`Order ${data.order.id} confirmed.`);
+        return;
       }
+
+      if (data.mode === 'cod') {
+        completeOrder(data.order);
+        return;
+      }
+
+      if (data.mode === 'razorpay_live' && data.keyId && data.razorpayOrder) {
+        const loaded = await loadRazorpayScript();
+        if (loaded && window.Razorpay) {
+          const rzp = new window.Razorpay({
+            key: data.keyId,
+            amount: data.razorpayOrder.amount,
+            currency: data.razorpayOrder.currency,
+            name: 'NutStrid Jaipur',
+            description: `Dry Fruits Order ${data.order.id}`,
+            order_id: data.razorpayOrder.id,
+            prefill: {
+              name: customerName,
+              contact: phone,
+              email: user?.email || '',
+            },
+            theme: { color: '#0A1F17' },
+            handler: async (response: {
+              razorpay_order_id: string;
+              razorpay_payment_id: string;
+              razorpay_signature: string;
+            }) => {
+              try {
+                const verifyRes = await fetch('/api/payments/verify', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    orderId: data.order.id,
+                    mode: 'razorpay_live',
+                    ...response,
+                  }),
+                });
+                const verifyData = await verifyRes.json();
+                if (verifyRes.ok) {
+                  completeOrder(verifyData.order);
+                } else {
+                  showToast(verifyData.error || 'Payment verification failed.');
+                }
+              } catch {
+                showToast('Could not verify Razorpay payment.');
+              }
+            },
+          });
+          rzp.open();
+          return;
+        }
+      }
+
+      // Open interactive UPI QR or Razorpay Sandbox modal
+      setPaymentSession({
+        mode: data.mode,
+        order: data.order,
+        upiUri: data.upiUri,
+        upiVpa: data.upiVpa,
+      });
     } catch {
-      showToast('Network error placing order.');
+      showToast('Network error starting payment.');
     } finally {
       setSubmitting(false);
     }
   };
 
   if (confirmedOrder) {
+    const statusLabel =
+      confirmedOrder.paymentStatus === 'paid'
+        ? 'Paid'
+        : confirmedOrder.paymentStatus === 'pending_verification'
+          ? 'UPI Ref Recorded'
+          : 'Pay on Delivery';
+
     return (
       <main className="py-12 sm:py-20 max-w-[720px] mx-auto px-4 sm:px-6">
         <div className="rounded-[32px] bg-card border-2 border-pistachio p-8 sm:p-10 space-y-6 shadow-sm">
@@ -260,14 +354,22 @@ export function CheckoutPage() {
           <div className="p-5 rounded-2xl bg-oat border border-ink/10 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-ink/70">Payment Method</span>
-              <span className="font-mono font-bold">{confirmedOrder.paymentMethod}</span>
+              <span className="font-mono font-bold">
+                {confirmedOrder.paymentMethod} · {statusLabel}
+              </span>
             </div>
+            {(confirmedOrder.paymentId || confirmedOrder.utrNumber) && (
+              <div className="flex justify-between">
+                <span className="text-ink/70">Payment Reference</span>
+                <span className="font-mono text-xs">{confirmedOrder.paymentId || confirmedOrder.utrNumber}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-ink/70">Delivering To</span>
               <span className="text-right max-w-xs">{confirmedOrder.address}, {confirmedOrder.pincode}</span>
             </div>
             <div className="flex justify-between pt-2 border-t border-ink/10 font-semibold">
-              <span>Total Paid / Payable</span>
+              <span>Total {confirmedOrder.paymentStatus === 'paid' ? 'Paid' : 'Amount'}</span>
               <span className="font-mono tabular-nums">{formatINR(confirmedOrder.total)}</span>
             </div>
           </div>
@@ -380,27 +482,55 @@ export function CheckoutPage() {
               <span className="block font-mono text-[10px] uppercase tracking-[0.14em] text-almond mb-2.5">
                 Payment Method
               </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 {(
                   [
-                    { id: 'UPI', label: 'UPI (GPay / PhonePe / Paytm)', sub: 'Instant payment' },
-                    { id: 'COD', label: 'Cash on Delivery', sub: 'Pay at doorstep' },
+                    {
+                      id: 'UPI',
+                      label: 'UPI QR (GPay / PhonePe / Paytm)',
+                      sub: 'Scan dynamic QR or pay via UPI app · Zero fee',
+                      icon: Smartphone,
+                    },
+                    {
+                      id: 'RAZORPAY',
+                      label: 'Cards, Netbanking & Wallets (Razorpay)',
+                      sub: 'Visa, Mastercard, RuPay, HDFC, ICICI, SBI',
+                      icon: CreditCard,
+                    },
+                    {
+                      id: 'COD',
+                      label: 'Cash on Delivery',
+                      sub: 'Pay in cash or UPI at your doorstep',
+                      icon: Banknote,
+                    },
                   ] as const
-                ).map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setPaymentMethod(m.id)}
-                    className={`p-4 rounded-2xl border text-left transition-all cursor-pointer ${
-                      paymentMethod === m.id
-                        ? 'bg-saffron/20 border-saffron shadow-xs'
-                        : 'bg-oat border-ink/15 hover:border-ink'
-                    }`}
-                  >
-                    <p className="font-semibold text-sm text-ink">{m.label}</p>
-                    <p className="text-xs text-ink/65 mt-0.5">{m.sub}</p>
-                  </button>
-                ))}
+                ).map((m) => {
+                  const Icon = m.icon;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setPaymentMethod(m.id)}
+                      className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
+                        paymentMethod === m.id
+                          ? 'bg-saffron/20 border-saffron shadow-xs'
+                          : 'bg-oat border-ink/15 hover:border-ink'
+                      }`}
+                    >
+                      <span
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                          paymentMethod === m.id ? 'bg-saffron text-ink' : 'bg-card text-almond border border-ink/10'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <p className="font-semibold text-sm text-ink">{m.label}</p>
+                        <p className="text-xs text-ink/65 mt-0.5">{m.sub}</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -445,12 +575,25 @@ export function CheckoutPage() {
               disabled={submitting}
               className="btn-shine w-full py-4 rounded-full bg-saffron text-ink font-mono text-xs font-bold uppercase tracking-[0.14em] inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
-              <span>{submitting ? 'Confirming...' : `Place Order · ${formatINR(total)}`}</span>
+              <span>
+                {submitting
+                  ? 'Initiating...'
+                  : paymentMethod === 'COD'
+                    ? `Place COD Order · ${formatINR(total)}`
+                    : `Pay ${formatINR(total)}`}
+              </span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </form>
       )}
+
+      <PaymentModal
+        session={paymentSession}
+        onClose={() => setPaymentSession(null)}
+        onSuccess={completeOrder}
+        onError={showToast}
+      />
     </main>
   );
 }
