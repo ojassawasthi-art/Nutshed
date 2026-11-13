@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { Analytics } from '@vercel/analytics/react';
 import { StoreProvider, useStore } from './context/StoreContext';
 import { GlobalSvgDefs } from './components/NutSvgAssets';
 import { FrontPageIntro } from './components/FrontPageIntro';
@@ -119,6 +120,7 @@ export default function App() {
   return (
     <StoreProvider>
       <AppShell />
+      <Analytics />
     </StoreProvider>
   );
 }
